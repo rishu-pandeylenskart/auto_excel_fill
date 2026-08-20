@@ -68,3 +68,7 @@ on the user's work PC immediately before processing.
 TKINTER/TCL NOTE:
 The portable runtime must keep its Tcl/Tk files. Do not remove runtime\tcl,
 because Tkinter requires init.tcl at runtime.
+
+
+CONTENTS + QUANTITY FIX:
+ShipmentDeatils.Contents is explicitly overwritten from source data for each unique HAWB; the row-2 template Contents value is not blindly retained. ShipmentItemsDetails quantity uses a robust quantity-column detector (QTY/Qty/Quantity and known variants). If a quantity column exists, all matching rows are SUMMED; blanks count as 0 and invalid nonnumeric quantity values stop the job. If no quantity column exists, quantity is COUNT(source rows) for HAWB + normalized Contents.
