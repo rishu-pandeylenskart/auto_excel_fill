@@ -65,7 +65,7 @@ jobs:
         run: |
           Remove-Item -Recurse -Force "runtime\Lib\test" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "runtime\Lib\ensurepip" -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force "runtime\tcl" -ErrorAction SilentlyContinue
+          # Keep runtime\tcl because Tkinter requires Tcl/Tk and init.tcl.
 
       - name: Create portable package
         shell: powershell
