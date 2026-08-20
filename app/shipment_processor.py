@@ -28,7 +28,11 @@ ALIASES = {
     "contents": ["Contents", "Content", "Commodity", "Goods Description", "GoodsDescription"],
     "declared_value": ["Declared Value", "DeclaredValue", "Shipment Value", "Value"],
     "invoice": ["Invoice", "Invoice No", "Invoice Number", "InvoiceNo"],
-    "qty": ["QTY", "Quantity"],
+    "qty": [
+        "QTY", "Qty", "Quantity", "QTY.", "Qty.",
+        "Item Qty", "Item Quantity", "Quantity Shipped", "No Of Pieces",
+        "No. Of Pieces", "NoOfPieces"
+    ],
     "currency": ["Currency", "Currency Code", "CurrencyCode"],
 }
 
@@ -65,6 +69,24 @@ def to_number(v):
         return float(str(v).replace(",", "").strip())
     except Exception:
         return 0.0
+
+def parse_quantity(v):
+    """Return quantity as a number, rejecting non-numeric nonblank values."""
+    if v is None or str(v).strip() == "":
+        return None
+    if isinstance(v, bool):
+        raise ValueError("Boolean is not a valid quantity")
+    if isinstance(v, (int, float)):
+        value = float(v)
+    else:
+        raw = str(v).strip().replace(",", "")
+        try:
+            value = float(raw)
+        except Exception as e:
+            raise ValueError(f"Invalid quantity value: {v!r}") from e
+    if value < 0:
+        raise ValueError(f"Quantity cannot be negative: {value}")
+    return value
 
 def find_column(headers, aliases):
     normalized = {norm_header(h): i for i, h in enumerate(headers)}
@@ -184,7 +206,7 @@ def read_source(path: Path, temp_dir: Path):
             "declared_value": to_number(vals[cols["declared_value"]]),
             "invoice": vals[cols["invoice"]],
             "reference": vals[cols["reference"]] if cols["reference"] is not None else None,
-            "qty": to_number(vals[cols["qty"]]) if cols["qty"] is not None else None,
+            "qty": parse_quantity(vals[cols["qty"]]) if cols["qty"] is not None else None,
             "currency": vals[cols["currency"]] if cols["currency"] is not None else None,
         })
     return rows
@@ -289,8 +311,16 @@ def process(source_paths, template_path, output_dir, progress=lambda x: None):
                 })
                 continue
 
+            # ShipmentDeatils.Contents must overwrite the template row-2 value;
+            # it is not a passive fill-down field. Use the first nonblank original
+            # Contents value for the HAWB. All normalized contents are still grouped
+            # separately for ShipmentItemsDetails.
+            preferred_contents = next(
+                (r["contents"] for r in rows if r["contents"]), None
+            )
             shipment_rows.append({
                 "hawb": hawb,
+                "contents": preferred_contents,
                 "reference": next((r["reference"] for r in rows if r["reference"] not in (None, "")), None),
                 "invoice": next((r["invoice"] for r in rows if r["invoice"] not in (None, "")), None),
                 "shipment_value": sum(r["declared_value"] for r in rows),
@@ -312,10 +342,22 @@ def process(source_paths, template_path, output_dir, progress=lambda x: None):
                         "reason": "Commodity has no defined HS-code rule."
                     })
                 continue
-            qtys = [r["qty"] for r in rows if r["qty"] is not None]
+            # Quantity rule:
+            # - If a recognized quantity column exists in the source, SUM every
+            #   numeric quantity for this HAWB + normalized Contents. Blank cells
+            #   contribute 0; invalid text is rejected during source parsing.
+            # - If no quantity column exists, COUNT the matching source rows.
+            quantity_column_exists = any(
+                r["qty"] is not None for r in rows
+            )
+            if quantity_column_exists:
+                qty = sum((r["qty"] or 0) for r in rows)
+            else:
+                qty = len(rows)
+
             item_rows.append({
                 "hawb": hawb, "contents": contents, "hs": hs,
-                "qty": sum(qtys) if qtys else len(rows),
+                "qty": qty,
                 "total_fob": sum(r["declared_value"] for r in rows),
             })
 
@@ -334,7 +376,7 @@ def process(source_paths, template_path, output_dir, progress=lambda x: None):
 
         ws_s, ws_i = wb[SHEET_SHIPMENTS], wb[SHEET_ITEMS]
         s_cols = template_cols(ws_s, [
-            "HAWBNumber", "ShipmentValue", "ShipperReference1_OrderNO", "InvoiceNo", "InvoiceDate"
+            "HAWBNumber", "Contents", "ShipmentValue", "ShipperReference1_OrderNO", "InvoiceNo", "InvoiceDate"
         ])
         i_cols = template_cols(ws_i, [
             "HAWBNumber", "CommodityType", "GoodsDescription", "IsMEIS", "HSCode",
@@ -355,6 +397,7 @@ def process(source_paths, template_path, output_dir, progress=lambda x: None):
         for row_no, rec in enumerate(shipment_rows, 2):
             copy_complete_row2(ws_s, s_donor, row_no)
             write(ws_s, row_no, s_cols.get("HAWBNumber"), rec["hawb"])
+            write(ws_s, row_no, s_cols.get("Contents"), rec["contents"])
             write(ws_s, row_no, s_cols.get("ShipmentValue"), rec["shipment_value"])
             write(ws_s, row_no, s_cols.get("ShipperReference1_OrderNO"), rec["reference"])
             write(ws_s, row_no, s_cols.get("InvoiceNo"), rec["invoice"])
