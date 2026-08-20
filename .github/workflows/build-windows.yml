@@ -1,0 +1,88 @@
+
+name: Build Shipment Automation Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download official Python installer
+        shell: powershell
+        run: |
+          $url = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\python-installer.exe"
+
+      - name: Install Python into portable folder
+        shell: powershell
+        run: |
+          $target = "$env:GITHUB_WORKSPACE\runtime"
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Start-Process -FilePath "$env:RUNNER_TEMP\python-installer.exe" `
+            -ArgumentList "/quiet InstallAllUsers=0 TargetDir=`"$target`" PrependPath=0 Include_test=0 Include_launcher=0" `
+            -Wait -NoNewWindow
+
+          if (!(Test-Path "$target\python.exe")) {
+            throw "Portable Python installation failed."
+          }
+
+      - name: Install Python dependencies into portable runtime
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\runtime\python.exe" -m pip install --upgrade pip
+          & "$env:GITHUB_WORKSPACE\runtime\python.exe" -m pip install openpyxl pywin32
+
+      - name: Verify Tkinter, Python and Excel COM modules
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\runtime\python.exe" -c "import tkinter, openpyxl, win32com.client; print('PYTHON/TKINTER/OPENPYXL/PYWIN32 IMPORTS OK')"
+
+      - name: Verify win32com package is importable
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\runtime\python.exe" -c "import win32com.client; print('PYWIN32/COM MODULE OK')"
+          Write-Host "Note: GitHub-hosted Windows runners do not provide Microsoft Excel."
+          Write-Host "Excel COM is tested when START_SHIPMENT.bat runs on the actual work PC."
+
+      - name: Test application imports
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = "$env:GITHUB_WORKSPACE\app"
+          & "$env:GITHUB_WORKSPACE\runtime\python.exe" -c "import shipment_processor; print('SHIPMENT PROCESSOR IMPORT OK')"
+
+      - name: Remove unnecessary build files
+        shell: powershell
+        run: |
+          Remove-Item -Recurse -Force "runtime\Lib\test" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "runtime\Lib\ensurepip" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "runtime\tcl" -ErrorAction SilentlyContinue
+
+      - name: Create portable package
+        shell: powershell
+        run: |
+          $package = "$env:GITHUB_WORKSPACE\Shipment_Automation_Portable"
+          New-Item -ItemType Directory -Force "$package" | Out-Null
+          Copy-Item -Recurse "$env:GITHUB_WORKSPACE\runtime" "$package\runtime"
+          Copy-Item -Recurse "$env:GITHUB_WORKSPACE\app" "$package\app"
+          Copy-Item "$env:GITHUB_WORKSPACE\START_SHIPMENT.bat" "$package\START_SHIPMENT.bat"
+          Copy-Item "$env:GITHUB_WORKSPACE\README.txt" "$package\README.txt"
+
+          Compress-Archive -Path "$package\*" `
+            -DestinationPath "$env:GITHUB_WORKSPACE\Shipment_Automation_Portable.zip" -Force
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shipment_Automation_Portable
+          path: Shipment_Automation_Portable.zip
+          if-no-files-found: error
