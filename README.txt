@@ -63,3 +63,8 @@ Therefore the workflow verifies Python/Tkinter/openpyxl/pywin32 and the
 application import, but does not falsely claim that Excel COM was tested
 on GitHub. The application performs a real Excel COM availability check
 on the user's work PC immediately before processing.
+
+
+TKINTER/TCL NOTE:
+The portable runtime must keep its Tcl/Tk files. Do not remove runtime\tcl,
+because Tkinter requires init.tcl at runtime.
